@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { store, createTemporaryOccupation } = require('../models/store');
+const { store, createTemporaryOccupation, isDeskUnderMaintenance } = require('../models/store');
 const { auth, requireRole } = require('../middleware/auth');
 
 router.get('/', auth, (req, res) => {
@@ -22,6 +22,11 @@ router.post('/', auth, requireRole('operator', 'admin'), (req, res) => {
   if (!desk_id) return res.status(400).json({ error: 'desk_id is required' });
   const desk = store.desks.find((d) => d.id === desk_id);
   if (!desk) return res.status(400).json({ error: 'Desk not found' });
+
+  const today = new Date().toISOString().substring(0, 10);
+  if (isDeskUnderMaintenance(desk_id, today)) {
+    return res.status(409).json({ error: 'Cannot create temporary occupation: desk is currently under maintenance' });
+  }
 
   const activeOcc = store.temporaryOccupations.find(
     (o) => o.desk_id === desk_id && o.status === 'active'

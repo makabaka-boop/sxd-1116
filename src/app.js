@@ -7,6 +7,7 @@ const departmentRoutes = require('./routes/departments');
 const scheduleRoutes = require('./routes/schedules');
 const occupationRoutes = require('./routes/occupations');
 const reportRoutes = require('./routes/reports');
+const maintenanceRoutes = require('./routes/maintenance');
 
 const app = express();
 const PORT = 8016;
@@ -22,6 +23,7 @@ app.use('/api/departments', departmentRoutes);
 app.use('/api/schedules', scheduleRoutes);
 app.use('/api/occupations', occupationRoutes);
 app.use('/api/reports', reportRoutes);
+app.use('/api/maintenance', maintenanceRoutes);
 
 app.use((err, req, res, _next) => {
   console.error(err.stack);

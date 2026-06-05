@@ -1,5 +1,14 @@
 const { store, createSnapshot } = require('../models/store');
 
+function getMaintenancePlansForDate(dateStr) {
+  return store.maintenancePlans.filter(
+    (p) =>
+      p.status !== 'cancelled' &&
+      dateStr >= p.start_date &&
+      dateStr <= p.end_date
+  );
+}
+
 function buildHistoricalState(dateStr) {
   const activeScheduleRules = store.scheduleRules.filter((r) => {
     if (r.effective_date && r.effective_date > dateStr) return false;
@@ -22,6 +31,9 @@ function buildHistoricalState(dateStr) {
     return false;
   });
 
+  const maintenancePlans = getMaintenancePlansForDate(dateStr);
+  const maintenanceDeskIds = new Set(maintenancePlans.map((p) => p.desk_id));
+
   const occupiedDeskIds = new Set([
     ...scheduleAssignments.map((a) => a.desk_id),
     ...temporaryOccupations.map((o) => o.desk_id),
@@ -29,7 +41,7 @@ function buildHistoricalState(dateStr) {
 
   const desks = store.desks.map((d) => ({
     ...d,
-    status: occupiedDeskIds.has(d.id) ? 'occupied' : 'available',
+    status: maintenanceDeskIds.has(d.id) ? 'maintenance' : (occupiedDeskIds.has(d.id) ? 'occupied' : 'available'),
   }));
 
   return {
@@ -37,6 +49,7 @@ function buildHistoricalState(dateStr) {
     scheduleAssignments,
     desks,
     temporaryOccupations,
+    maintenancePlans,
   };
 }
 
@@ -55,12 +68,16 @@ function takeSnapshot(dateStr, type) {
       break;
     case 'desk': {
       const state = buildHistoricalState(dateStr);
-      data = { desks: state.desks };
+      data = { desks: state.desks, maintenancePlans: state.maintenancePlans };
       break;
     }
     case 'occupation': {
       const state = buildHistoricalState(dateStr);
       data = { temporaryOccupations: state.temporaryOccupations };
+      break;
+    }
+    case 'maintenance': {
+      data = { maintenancePlans: getMaintenancePlansForDate(dateStr) };
       break;
     }
     default: {
@@ -70,6 +87,7 @@ function takeSnapshot(dateStr, type) {
         scheduleAssignments: state.scheduleAssignments,
         desks: state.desks,
         temporaryOccupations: state.temporaryOccupations,
+        maintenancePlans: state.maintenancePlans,
       };
     }
   }
@@ -90,7 +108,11 @@ function getSnapshot(dateStr, type) {
 function getHistoricalState(dateStr) {
   const snapshot = getSnapshot(dateStr, 'full');
   if (snapshot) {
-    return { source: 'snapshot', snapshot_taken_at: snapshot.created_at, data: snapshot.data };
+    const snapshotData = snapshot.data;
+    if (!snapshotData.maintenancePlans) {
+      snapshotData.maintenancePlans = getMaintenancePlansForDate(dateStr);
+    }
+    return { source: 'snapshot', snapshot_taken_at: snapshot.created_at, data: snapshotData };
   }
   const rebuilt = buildHistoricalState(dateStr);
   return { source: 'rebuilt', snapshot_taken_at: null, data: rebuilt };
@@ -104,6 +126,9 @@ function compareSnapshotWithCurrent(dateStr) {
   const historicalResult = getHistoricalState(dateStr);
   const historical = historicalResult.data;
   const current = buildCurrentState(dateStr);
+
+  const historicalMaintenancePlans = historical.maintenancePlans || [];
+  const currentMaintenancePlans = current.maintenancePlans || [];
 
   const diff = {
     date: dateStr,
@@ -121,12 +146,17 @@ function compareSnapshotWithCurrent(dateStr) {
     },
     desks: {
       added: current.desks.filter((cd) => !historical.desks.find((hd) => hd.id === cd.id)),
-      removed: historical.desks.filter((hd) => !current.desks.find((cd) => cd.id === hd.id)),
+      removed: historical.desks.filter((hd) => !historical.desks.find((cd) => cd.id === hd.id)),
       modified: [],
     },
     temporary_occupations: {
       added: current.temporaryOccupations.filter((co) => !historical.temporaryOccupations.find((ho) => ho.id === co.id)),
-      removed: historical.temporaryOccupations.filter((ho) => !current.temporaryOccupations.find((co) => co.id === ho.id)),
+      removed: historical.temporaryOccupations.filter((ho) => !historical.temporaryOccupations.find((co) => co.id === ho.id)),
+      modified: [],
+    },
+    maintenance_plans: {
+      added: currentMaintenancePlans.filter((cm) => !historicalMaintenancePlans.find((hm) => hm.id === cm.id)),
+      removed: historicalMaintenancePlans.filter((hm) => !currentMaintenancePlans.find((cm) => cm.id === hm.id)),
       modified: [],
     },
   };
@@ -150,6 +180,7 @@ function compareSnapshotWithCurrent(dateStr) {
   trackModifications(current.scheduleAssignments, historical.scheduleAssignments, 'schedule_assignments');
   trackModifications(current.desks, historical.desks, 'desks');
   trackModifications(current.temporaryOccupations, historical.temporaryOccupations, 'temporary_occupations');
+  trackModifications(currentMaintenancePlans, historicalMaintenancePlans, 'maintenance_plans');
 
   return diff;
 }

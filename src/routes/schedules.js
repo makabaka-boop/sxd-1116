@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { store, createScheduleRule, createScheduleAssignment } = require('../models/store');
+const { store, createScheduleRule, createScheduleAssignment, isDeskUnderMaintenance } = require('../models/store');
 const { auth, requireRole } = require('../middleware/auth');
 
 router.get('/rules', auth, (req, res) => {
@@ -66,6 +66,9 @@ router.post('/assignments', auth, requireRole('admin'), (req, res) => {
   if (!desk_id || !user_id || !date) {
     return res.status(400).json({ error: 'desk_id, user_id, and date are required' });
   }
+  if (isDeskUnderMaintenance(desk_id, date)) {
+    return res.status(409).json({ error: 'Cannot create schedule assignment: desk is under maintenance on this date' });
+  }
   const assignment = createScheduleAssignment({ schedule_rule_id, desk_id, user_id, date });
 
   const today = new Date().toISOString().substring(0, 10);
@@ -111,6 +114,7 @@ function generateAssignmentsForDate(dateStr) {
 
     const targetDesk = rule.desk_id;
     if (!targetDesk) continue;
+    if (isDeskUnderMaintenance(targetDesk, dateStr)) continue;
 
     const assignment = createScheduleAssignment({
       schedule_rule_id: rule.id,

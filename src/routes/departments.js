@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { store, createDepartment, createDesk } = require('../models/store');
+const { store, createDepartment, createDesk, getActiveMaintenanceForDesk } = require('../models/store');
 const { auth, requireRole } = require('../middleware/auth');
 
 router.get('/', auth, (req, res) => {
@@ -33,7 +33,16 @@ router.get('/desks', auth, (req, res) => {
   if (req.query.department_id) {
     desks = desks.filter((d) => d.department_id === req.query.department_id);
   }
-  res.json(desks);
+  const today = new Date().toISOString().substring(0, 10);
+  const result = desks.map((d) => {
+    const maintenance = getActiveMaintenanceForDesk(d.id, today);
+    return {
+      ...d,
+      maintenance_info: maintenance ? { id: maintenance.id, start_date: maintenance.start_date, end_date: maintenance.end_date, reason: maintenance.reason, status: maintenance.status } : null,
+      availability: maintenance ? 'maintenance' : d.status,
+    };
+  });
+  res.json(result);
 });
 
 router.post('/desks', auth, requireRole('admin'), (req, res) => {
@@ -56,6 +65,22 @@ router.put('/desks/:id', auth, requireRole('admin'), (req, res) => {
     desk.status = req.body.status;
   }
   res.json(desk);
+});
+
+router.get('/desks/:id/detail', auth, (req, res) => {
+  const desk = store.desks.find((d) => d.id === req.params.id);
+  if (!desk) return res.status(404).json({ error: 'Desk not found' });
+  const today = new Date().toISOString().substring(0, 10);
+  const maintenance = getActiveMaintenanceForDesk(desk.id, today);
+  const upcomingPlans = store.maintenancePlans.filter(
+    (p) => p.desk_id === desk.id && p.status !== 'cancelled' && p.status !== 'completed' && p.start_date > today
+  );
+  res.json({
+    ...desk,
+    maintenance_info: maintenance ? { id: maintenance.id, start_date: maintenance.start_date, end_date: maintenance.end_date, reason: maintenance.reason, status: maintenance.status } : null,
+    upcoming_maintenance: upcomingPlans.map((p) => ({ id: p.id, start_date: p.start_date, end_date: p.end_date, reason: p.reason, status: p.status })),
+    availability: maintenance ? 'maintenance' : desk.status,
+  });
 });
 
 router.delete('/desks/:id', auth, requireRole('admin'), (req, res) => {

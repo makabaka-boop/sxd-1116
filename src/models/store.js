@@ -7,6 +7,7 @@ const store = {
   scheduleRules: [],
   scheduleAssignments: [],
   temporaryOccupations: [],
+  maintenancePlans: [],
   dailyReports: [],
   snapshots: [],
 };
@@ -108,6 +109,43 @@ function createDailyReport({ date, occupancy_rate, temp_occupation_count, unrele
   return report;
 }
 
+function createMaintenancePlan({ desk_id, start_date, end_date, reason, status }) {
+  const plan = {
+    id: uuidv4(),
+    desk_id,
+    start_date,
+    end_date,
+    reason: reason || '',
+    status: status || 'scheduled',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  store.maintenancePlans.push(plan);
+  return plan;
+}
+
+function isDeskUnderMaintenance(desk_id, dateStr) {
+  return store.maintenancePlans.some(
+    (p) =>
+      p.desk_id === desk_id &&
+      p.status !== 'cancelled' &&
+      p.status !== 'completed' &&
+      dateStr >= p.start_date &&
+      dateStr <= p.end_date
+  );
+}
+
+function getActiveMaintenanceForDesk(desk_id, dateStr) {
+  return store.maintenancePlans.find(
+    (p) =>
+      p.desk_id === desk_id &&
+      p.status !== 'cancelled' &&
+      p.status !== 'completed' &&
+      dateStr >= p.start_date &&
+      dateStr <= p.end_date
+  ) || null;
+}
+
 function createSnapshot({ date, type, data }) {
   const snapshot = {
     id: uuidv4(),
@@ -128,6 +166,9 @@ module.exports = {
   createScheduleRule,
   createScheduleAssignment,
   createTemporaryOccupation,
+  createMaintenancePlan,
+  isDeskUnderMaintenance,
+  getActiveMaintenanceForDesk,
   createDailyReport,
   createSnapshot,
 };
