@@ -67,6 +67,15 @@ router.post('/assignments', auth, requireRole('admin'), (req, res) => {
     return res.status(400).json({ error: 'desk_id, user_id, and date are required' });
   }
   const assignment = createScheduleAssignment({ schedule_rule_id, desk_id, user_id, date });
+
+  const today = new Date().toISOString().substring(0, 10);
+  if (date === today) {
+    const desk = store.desks.find((d) => d.id === desk_id);
+    if (desk && desk.status !== 'maintenance') {
+      desk.status = 'occupied';
+    }
+  }
+
   res.status(201).json(assignment);
 });
 
@@ -110,6 +119,15 @@ function generateAssignmentsForDate(dateStr) {
       date: dateStr,
       status: 'active',
     });
+
+    const today = new Date().toISOString().substring(0, 10);
+    if (dateStr === today) {
+      const desk = store.desks.find((d) => d.id === targetDesk);
+      if (desk && desk.status !== 'maintenance') {
+        desk.status = 'occupied';
+      }
+    }
+
     generated.push(assignment);
   }
   return generated;

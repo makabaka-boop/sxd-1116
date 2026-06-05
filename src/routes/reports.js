@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { store } = require('../models/store');
 const { generateDailyReport } = require('../services/report');
-const { takeSnapshot, getSnapshot, compareSnapshotWithCurrent } = require('../services/snapshot');
+const { takeSnapshot, getSnapshot, getHistoricalState, compareSnapshotWithCurrent } = require('../services/snapshot');
 const { auth, requireRole } = require('../middleware/auth');
 
 router.get('/', auth, (req, res) => {
@@ -62,11 +62,8 @@ router.get('/snapshots/:id', auth, (req, res) => {
 
 router.get('/rollback/:date', auth, (req, res) => {
   const { date } = req.params;
-  const snapshot = getSnapshot(date, 'full');
-  if (!snapshot) {
-    return res.status(404).json({ error: 'No snapshot found for the given date', date });
-  }
-  res.json({ date, snapshot });
+  const result = getHistoricalState(date);
+  res.json({ date, source: result.source, snapshot_taken_at: result.snapshot_taken_at, data: result.data });
 });
 
 router.get('/compare/:date', auth, (req, res) => {

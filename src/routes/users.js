@@ -3,12 +3,21 @@ const router = express.Router();
 const { store, createUser } = require('../models/store');
 const { auth, requireRole } = require('../middleware/auth');
 
-router.post('/', (req, res) => {
+router.post('/', (req, res, next) => {
+  const userId = req.headers['x-user-id'];
   const { username, role, department_id } = req.body;
   if (!username || !role) return res.status(400).json({ error: 'username and role are required' });
   if (!['admin', 'operator', 'auditor'].includes(role)) {
     return res.status(400).json({ error: 'role must be admin, operator, or auditor' });
   }
+
+  if (role === 'admin') {
+    if (!userId) return res.status(401).json({ error: 'Creating admin user requires authentication' });
+    const currentUser = store.users.find((u) => u.id === userId);
+    if (!currentUser) return res.status(401).json({ error: 'User not found' });
+    if (currentUser.role !== 'admin') return res.status(403).json({ error: 'Only admin can create admin users' });
+  }
+
   const existing = store.users.find((u) => u.username === username);
   if (existing) return res.status(409).json({ error: 'Username already exists' });
   const user = createUser({ username, role, department_id });

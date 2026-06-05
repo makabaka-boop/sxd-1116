@@ -7,7 +7,24 @@ function generateDailyReport(dateStr) {
     return { error: 'No desks configured', date: dateStr };
   }
 
-  const occupiedDesks = store.desks.filter((d) => d.status === 'occupied').length;
+  const scheduledDeskIds = new Set(
+    store.scheduleAssignments
+      .filter((a) => a.date === dateStr && a.status === 'active')
+      .map((a) => a.desk_id)
+  );
+
+  const tempOccDeskIds = new Set(
+    store.temporaryOccupations
+      .filter((o) => {
+        if (o.status !== 'active') return false;
+        const start = o.start_time.substring(0, 10);
+        return start <= dateStr;
+      })
+      .map((o) => o.desk_id)
+  );
+
+  const occupiedDeskIds = new Set([...scheduledDeskIds, ...tempOccDeskIds]);
+  const occupiedDesks = occupiedDeskIds.size;
   const occupancyRate = parseFloat(((occupiedDesks / totalDesks) * 100).toFixed(2));
 
   const dayStart = dateStr + 'T00:00:00.000Z';
@@ -30,7 +47,7 @@ function generateDailyReport(dateStr) {
       departmentBreakdown[deptId] = { total: 0, occupied: 0 };
     }
     departmentBreakdown[deptId].total += 1;
-    if (desk.status === 'occupied') {
+    if (occupiedDeskIds.has(desk.id)) {
       departmentBreakdown[deptId].occupied += 1;
     }
   }
@@ -43,6 +60,8 @@ function generateDailyReport(dateStr) {
     details: {
       total_desks: totalDesks,
       occupied_desks: occupiedDesks,
+      scheduled_desks: scheduledDeskIds.size,
+      temp_occupied_desks: tempOccDeskIds.size,
       department_breakdown: departmentBreakdown,
       unreleased_records: unreleasedRecords.map((o) => ({
         id: o.id,

@@ -1,5 +1,45 @@
 const { store, createSnapshot } = require('../models/store');
 
+function buildHistoricalState(dateStr) {
+  const activeScheduleRules = store.scheduleRules.filter((r) => {
+    if (r.effective_date && r.effective_date > dateStr) return false;
+    if (r.expired_date && r.expired_date < dateStr) return false;
+    return true;
+  });
+
+  const scheduleAssignments = store.scheduleAssignments.filter(
+    (a) => a.date === dateStr && a.status === 'active'
+  );
+
+  const temporaryOccupations = store.temporaryOccupations.filter((o) => {
+    const startDate = o.start_time.substring(0, 10);
+    if (startDate > dateStr) return false;
+    if (o.status === 'active') return true;
+    if (o.end_time) {
+      const endDate = o.end_time.substring(0, 10);
+      return endDate >= dateStr;
+    }
+    return false;
+  });
+
+  const occupiedDeskIds = new Set([
+    ...scheduleAssignments.map((a) => a.desk_id),
+    ...temporaryOccupations.map((o) => o.desk_id),
+  ]);
+
+  const desks = store.desks.map((d) => ({
+    ...d,
+    status: occupiedDeskIds.has(d.id) ? 'occupied' : 'available',
+  }));
+
+  return {
+    scheduleRules: activeScheduleRules,
+    scheduleAssignments,
+    desks,
+    temporaryOccupations,
+  };
+}
+
 function takeSnapshot(dateStr, type) {
   let data;
   switch (type) {
@@ -13,33 +53,25 @@ function takeSnapshot(dateStr, type) {
         scheduleAssignments: store.scheduleAssignments.filter((a) => a.date === dateStr),
       };
       break;
-    case 'desk':
-      data = {
-        desks: JSON.parse(JSON.stringify(store.desks)),
-      };
+    case 'desk': {
+      const state = buildHistoricalState(dateStr);
+      data = { desks: state.desks };
       break;
-    case 'occupation':
-      data = {
-        temporaryOccupations: store.temporaryOccupations.filter((o) => {
-          const start = o.start_time.substring(0, 10);
-          return start <= dateStr && (o.status === 'active' || (o.end_time && o.end_time.substring(0, 10) >= dateStr));
-        }),
-      };
+    }
+    case 'occupation': {
+      const state = buildHistoricalState(dateStr);
+      data = { temporaryOccupations: state.temporaryOccupations };
       break;
-    default:
+    }
+    default: {
+      const state = buildHistoricalState(dateStr);
       data = {
-        scheduleRules: store.scheduleRules.filter((r) => {
-          if (r.effective_date && r.effective_date > dateStr) return false;
-          if (r.expired_date && r.expired_date < dateStr) return false;
-          return true;
-        }),
-        scheduleAssignments: store.scheduleAssignments.filter((a) => a.date === dateStr),
-        desks: JSON.parse(JSON.stringify(store.desks)),
-        temporaryOccupations: store.temporaryOccupations.filter((o) => {
-          const start = o.start_time.substring(0, 10);
-          return start <= dateStr && (o.status === 'active' || (o.end_time && o.end_time.substring(0, 10) >= dateStr));
-        }),
+        scheduleRules: state.scheduleRules,
+        scheduleAssignments: state.scheduleAssignments,
+        desks: state.desks,
+        temporaryOccupations: state.temporaryOccupations,
       };
+    }
   }
   return createSnapshot({ date: dateStr, type, data });
 }
@@ -55,40 +87,28 @@ function getSnapshot(dateStr, type) {
   return snapshots.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0] || null;
 }
 
+function getHistoricalState(dateStr) {
+  const snapshot = getSnapshot(dateStr, 'full');
+  if (snapshot) {
+    return { source: 'snapshot', snapshot_taken_at: snapshot.created_at, data: snapshot.data };
+  }
+  const rebuilt = buildHistoricalState(dateStr);
+  return { source: 'rebuilt', snapshot_taken_at: null, data: rebuilt };
+}
+
 function buildCurrentState(dateStr) {
-  const activeScheduleRules = store.scheduleRules.filter((r) => {
-    if (r.effective_date && r.effective_date > dateStr) return false;
-    if (r.expired_date && r.expired_date < dateStr) return false;
-    return true;
-  });
-
-  const scheduleAssignments = store.scheduleAssignments.filter((a) => a.date === dateStr);
-
-  const temporaryOccupations = store.temporaryOccupations.filter((o) => {
-    const start = o.start_time.substring(0, 10);
-    return start <= dateStr && (o.status === 'active' || (o.end_time && o.end_time.substring(0, 10) >= dateStr));
-  });
-
-  return {
-    scheduleRules: activeScheduleRules,
-    scheduleAssignments,
-    desks: JSON.parse(JSON.stringify(store.desks)),
-    temporaryOccupations,
-  };
+  return buildHistoricalState(dateStr);
 }
 
 function compareSnapshotWithCurrent(dateStr) {
-  const snapshot = getSnapshot(dateStr, 'full');
-  if (!snapshot) {
-    return { error: 'No snapshot found for the given date', date: dateStr };
-  }
-
+  const historicalResult = getHistoricalState(dateStr);
+  const historical = historicalResult.data;
   const current = buildCurrentState(dateStr);
-  const historical = snapshot.data;
 
   const diff = {
     date: dateStr,
-    snapshot_taken_at: snapshot.created_at,
+    snapshot_taken_at: historicalResult.snapshot_taken_at,
+    historical_source: historicalResult.source,
     schedule_rules: {
       added: current.scheduleRules.filter((cr) => !historical.scheduleRules.find((hr) => hr.id === cr.id)),
       removed: historical.scheduleRules.filter((hr) => !current.scheduleRules.find((cr) => cr.id === hr.id)),
@@ -134,4 +154,4 @@ function compareSnapshotWithCurrent(dateStr) {
   return diff;
 }
 
-module.exports = { takeSnapshot, takeFullDailySnapshot, getSnapshot, buildCurrentState, compareSnapshotWithCurrent };
+module.exports = { takeSnapshot, takeFullDailySnapshot, getSnapshot, getHistoricalState, buildCurrentState, compareSnapshotWithCurrent };
