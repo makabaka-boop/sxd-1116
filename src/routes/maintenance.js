@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { store, createMaintenancePlan, isDeskUnderMaintenance } = require('../models/store');
+const { store, createMaintenancePlan, isDeskUnderMaintenance, getEffectivePlanStatus } = require('../models/store');
 const { auth, requireRole } = require('../middleware/auth');
 
 router.get('/', auth, (req, res) => {
@@ -9,7 +9,7 @@ router.get('/', auth, (req, res) => {
     plans = plans.filter((p) => p.desk_id === req.query.desk_id);
   }
   if (req.query.status) {
-    plans = plans.filter((p) => p.status === req.query.status);
+    plans = plans.filter((p) => getEffectivePlanStatus(p) === req.query.status);
   }
   if (req.query.start_date) {
     plans = plans.filter((p) => p.start_date >= req.query.start_date);
@@ -17,13 +17,13 @@ router.get('/', auth, (req, res) => {
   if (req.query.end_date) {
     plans = plans.filter((p) => p.end_date <= req.query.end_date);
   }
-  res.json(plans);
+  res.json(plans.map((p) => ({ ...p, status: getEffectivePlanStatus(p) })));
 });
 
 router.get('/:id', auth, (req, res) => {
   const plan = store.maintenancePlans.find((p) => p.id === req.params.id);
   if (!plan) return res.status(404).json({ error: 'Maintenance plan not found' });
-  res.json(plan);
+  res.json({ ...plan, status: getEffectivePlanStatus(plan) });
 });
 
 router.post('/', auth, requireRole('admin'), (req, res) => {
@@ -114,8 +114,8 @@ router.put('/:id', auth, requireRole('admin'), (req, res) => {
     return res.status(400).json({ error: `Cannot update a ${plan.status} maintenance plan` });
   }
 
-  const new_start_date = req.body.start_date || plan.start_date;
-  const new_end_date = req.body.end_date || plan.end_date;
+  const new_start_date = req.body.start_date !== undefined ? req.body.start_date : plan.start_date;
+  const new_end_date = req.body.end_date !== undefined ? req.body.end_date : plan.end_date;
   if (new_start_date > new_end_date) {
     return res.status(400).json({ error: 'start_date must be before or equal to end_date' });
   }
@@ -136,6 +136,52 @@ router.put('/:id', auth, requireRole('admin'), (req, res) => {
     });
   }
 
+  const dateChanged = new_start_date !== plan.start_date || new_end_date !== plan.end_date;
+  if (dateChanged) {
+    const desk_id = plan.desk_id;
+    let current = new Date(new_start_date);
+    const endDate = new Date(new_end_date);
+    const conflictingOccupations = [];
+    const conflictingAssignments = [];
+
+    while (current <= endDate) {
+      const dateStr = current.toISOString().substring(0, 10);
+
+      const activeOcc = store.temporaryOccupations.find(
+        (o) => o.desk_id === desk_id && o.status === 'active'
+      );
+      if (activeOcc && !conflictingOccupations.find((c) => c.id === activeOcc.id)) {
+        conflictingOccupations.push(activeOcc);
+      }
+
+      const dayAssignments = store.scheduleAssignments.filter(
+        (a) => a.desk_id === desk_id && a.date === dateStr && a.status === 'active'
+      );
+      for (const a of dayAssignments) {
+        if (!conflictingAssignments.find((c) => c.id === a.id)) {
+          conflictingAssignments.push(a);
+        }
+      }
+
+      current.setDate(current.getDate() + 1);
+    }
+
+    if (conflictingOccupations.length > 0 || conflictingAssignments.length > 0) {
+      const reasons = [];
+      if (conflictingOccupations.length > 0) {
+        reasons.push(`desk has ${conflictingOccupations.length} unreleased temporary occupation(s)`);
+      }
+      if (conflictingAssignments.length > 0) {
+        reasons.push(`desk has ${conflictingAssignments.length} active schedule assignment(s) in the maintenance period`);
+      }
+      return res.status(409).json({
+        error: `Cannot update maintenance plan: ${reasons.join(' and ')}`,
+        conflicting_occupations: conflictingOccupations.map((o) => o.id),
+        conflicting_assignments: conflictingAssignments.map((a) => a.id),
+      });
+    }
+  }
+
   if (req.body.start_date !== undefined) plan.start_date = req.body.start_date;
   if (req.body.end_date !== undefined) plan.end_date = req.body.end_date;
   if (req.body.reason !== undefined) plan.reason = req.body.reason;
@@ -144,8 +190,25 @@ router.put('/:id', auth, requireRole('admin'), (req, res) => {
   const today = new Date().toISOString().substring(0, 10);
   const wasActive = plan.status === 'active';
   const shouldActive = plan.start_date <= today && plan.end_date >= today;
+  const shouldCompleted = plan.end_date < today;
 
-  if (shouldActive && !wasActive) {
+  if (shouldCompleted) {
+    plan.status = 'completed';
+    const desk = store.desks.find((d) => d.id === plan.desk_id);
+    if (desk && desk.status === 'maintenance') {
+      const anyActiveOcc = store.temporaryOccupations.find(
+        (o) => o.desk_id === desk.id && o.status === 'active'
+      );
+      const anyActiveAssign = store.scheduleAssignments.find(
+        (a) => a.desk_id === desk.id && a.date === today && a.status === 'active'
+      );
+      if (!anyActiveOcc && !anyActiveAssign) {
+        desk.status = 'available';
+      } else {
+        desk.status = 'occupied';
+      }
+    }
+  } else if (shouldActive && !wasActive) {
     plan.status = 'active';
     const desk = store.desks.find((d) => d.id === plan.desk_id);
     if (desk) desk.status = 'maintenance';

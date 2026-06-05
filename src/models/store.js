@@ -146,6 +146,14 @@ function getActiveMaintenanceForDesk(desk_id, dateStr) {
   ) || null;
 }
 
+function getEffectivePlanStatus(plan) {
+  if (plan.status === 'cancelled' || plan.status === 'completed') return plan.status;
+  const today = new Date().toISOString().substring(0, 10);
+  if (plan.end_date < today) return 'completed';
+  if (plan.start_date <= today && plan.end_date >= today) return 'active';
+  return 'scheduled';
+}
+
 function createSnapshot({ date, type, data }) {
   const snapshot = {
     id: uuidv4(),
@@ -169,6 +177,7 @@ module.exports = {
   createMaintenancePlan,
   isDeskUnderMaintenance,
   getActiveMaintenanceForDesk,
+  getEffectivePlanStatus,
   createDailyReport,
   createSnapshot,
 };

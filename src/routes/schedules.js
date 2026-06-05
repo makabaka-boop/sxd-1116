@@ -103,6 +103,7 @@ function generateAssignmentsForDate(dateStr) {
   });
 
   const generated = [];
+  const skipped = [];
   for (const rule of activeRules) {
     const exists = store.scheduleAssignments.find(
       (a) =>
@@ -114,7 +115,17 @@ function generateAssignmentsForDate(dateStr) {
 
     const targetDesk = rule.desk_id;
     if (!targetDesk) continue;
-    if (isDeskUnderMaintenance(targetDesk, dateStr)) continue;
+    if (isDeskUnderMaintenance(targetDesk, dateStr)) {
+      const desk = store.desks.find((d) => d.id === targetDesk);
+      skipped.push({
+        rule_id: rule.id,
+        rule_name: rule.name,
+        desk_id: targetDesk,
+        desk_name: desk ? desk.name : null,
+        reason: 'desk is under maintenance',
+      });
+      continue;
+    }
 
     const assignment = createScheduleAssignment({
       schedule_rule_id: rule.id,
@@ -134,14 +145,19 @@ function generateAssignmentsForDate(dateStr) {
 
     generated.push(assignment);
   }
-  return generated;
+  return { generated, skipped };
 }
 
 router.post('/generate', auth, requireRole('admin'), (req, res) => {
   const { date } = req.body;
   if (!date) return res.status(400).json({ error: 'date is required (YYYY-MM-DD)' });
-  const generated = generateAssignmentsForDate(date);
-  res.json({ generated_count: generated.length, assignments: generated });
+  const result = generateAssignmentsForDate(date);
+  res.json({
+    generated_count: result.generated.length,
+    skipped_count: result.skipped.length,
+    assignments: result.generated,
+    skipped: result.skipped,
+  });
 });
 
 module.exports = router;
