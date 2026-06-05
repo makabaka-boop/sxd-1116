@@ -7,6 +7,18 @@ function generateDailyReport(dateStr) {
     return { error: 'No desks configured', date: dateStr };
   }
 
+  const dayStart = dateStr + 'T00:00:00.000Z';
+  const dayEnd = dateStr + 'T23:59:59.999Z';
+
+  const overlapsDay = (o) => {
+    const end = o.end_time || '9999-12-31T23:59:59.999Z';
+    return o.start_time <= dayEnd && end >= dayStart;
+  };
+
+  const unreleasedAtDayEnd = (o) => {
+    return o.start_time <= dayEnd && (!o.end_time || o.end_time > dayEnd);
+  };
+
   const scheduledDeskIds = new Set(
     store.scheduleAssignments
       .filter((a) => a.date === dateStr && a.status === 'active')
@@ -15,11 +27,7 @@ function generateDailyReport(dateStr) {
 
   const tempOccDeskIds = new Set(
     store.temporaryOccupations
-      .filter((o) => {
-        if (o.status !== 'active') return false;
-        const start = o.start_time.substring(0, 10);
-        return start <= dateStr;
-      })
+      .filter(overlapsDay)
       .map((o) => o.desk_id)
   );
 
@@ -27,18 +35,11 @@ function generateDailyReport(dateStr) {
   const occupiedDesks = occupiedDeskIds.size;
   const occupancyRate = parseFloat(((occupiedDesks / totalDesks) * 100).toFixed(2));
 
-  const dayStart = dateStr + 'T00:00:00.000Z';
-  const dayEnd = dateStr + 'T23:59:59.999Z';
-
   const tempOccCount = store.temporaryOccupations.filter((o) => {
     return o.start_time >= dayStart && o.start_time <= dayEnd;
   }).length;
 
-  const unreleasedRecords = store.temporaryOccupations.filter((o) => {
-    if (o.status !== 'active') return false;
-    const start = o.start_time.substring(0, 10);
-    return start <= dateStr;
-  });
+  const unreleasedRecords = store.temporaryOccupations.filter(unreleasedAtDayEnd);
 
   const departmentBreakdown = {};
   for (const desk of store.desks) {
